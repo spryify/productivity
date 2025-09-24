@@ -425,7 +425,7 @@ function sendNotificationEmail(subject, body, docName, elements, mealPlanImageBl
             // Limit the number of rows to prevent large email bodies
             const tableData = element.data.slice(0, MAX_TABLE_ROWS);
             if (element.data.length > MAX_TABLE_ROWS) {
-              htmlBody += `<p><i>(Table truncated to ${MAX_TABLE_ROWS} rows)</i></p>`;
+              htmlBody += `<p><i>(Table truncated to ${MAX_TABLES_ROWS} rows)</i></p>`;
             }
             tableData.forEach((row, rowIndex) => {
               let rowStyle = '';
@@ -454,12 +454,35 @@ function sendNotificationEmail(subject, body, docName, elements, mealPlanImageBl
     });
   }
   
-  const inlineImages = {};
+  let imageUrl = null;
   if (mealPlanImageBlob) {
-    htmlBody += `<h3>Today's Menu</h3>`;
-    htmlBody += `<img src="cid:mealPlanImage" alt="Meal Plan Image" style="max-width: 100%; height: auto;">`;
-    inlineImages.mealPlanImage = mealPlanImageBlob;
-  } else if (mealPlanFileUrl) {
+    try {
+      // Create a temporary file in Drive from the image blob.
+      const tempFile = DriveApp.createFile(mealPlanImageBlob);
+      // Set sharing permissions to 'Anyone with the link' to make it publicly viewable.
+      tempFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+      // Get the file ID to construct a direct download link.
+      const fileId = tempFile.getId();
+      // Construct the direct download URL. This is the most reliable way to display images in email clients.
+      imageUrl = `https://drive.google.com/uc?export=view&id=${fileId}`;
+      
+      // Add the image tag to the HTML body
+      htmlBody += `<h3>Today's Menu</h3>`;
+      htmlBody += `<img src="${imageUrl}" alt="Meal Plan Image" style="max-width: 100%; height: auto;">`;
+      
+      // Immediately trash the temporary file to keep the user's Drive clean.
+      // This is important because the URL will still be active.
+      tempFile.setTrashed(true);
+      
+    } catch (e) {
+      Logger.log(`Failed to create public image file in Drive: ${e.message}. Falling back to URL.`);
+      // If saving the image to Drive fails, we'll fall back to the direct PDF link.
+      mealPlanImageBlob = null;
+    }
+  }
+
+  // Fallback to the direct link if the image failed to load or be hosted.
+  if (!mealPlanImageBlob && mealPlanFileUrl) {
     htmlBody += `<h3>Today's Menu</h3>`;
     htmlBody += `<p>View the full meal plan here: <a href="${mealPlanFileUrl}">Meal Plan PDF</a></p>`;
   }
@@ -467,9 +490,9 @@ function sendNotificationEmail(subject, body, docName, elements, mealPlanImageBl
   MailApp.sendEmail({
     to: userEmail,
     subject: subject,
-    htmlBody: htmlBody,
-    inlineImages: inlineImages
+    htmlBody: htmlBody
   });
   
   Logger.log(`Notification email sent to ${userEmail} with subject: ${subject}`);
 }
+
