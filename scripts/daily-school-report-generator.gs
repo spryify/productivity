@@ -26,7 +26,7 @@ function generateDailyReport() {
       // The `classroomReportContent.text` is a single string.
       // We will create a table from the text and add it to the elements.
       if (classroomReportContent.text) {
-        const reportTableData = parseReportTextToTable(classroomReportContent.text);
+        const reportTableData = parseClassroomReportText(classroomReportContent.text);
         if (reportTableData.length > 0) {
           extractedElements.push({ type: 'TABLE', data: reportTableData, isClassroomReport: true });
         }
@@ -175,8 +175,8 @@ function extractInformation(file) {
 
 /**
  * Reads the latest email with a specific subject line, extracts the text
- * and the first HTML table from its body, and returns the content.
- * @return {object | null} An object with 'text' and 'table' properties, or null if not found.
+ * from its body, and returns the content.
+ * @return {object | null} An object with 'text' property, or null if not found.
  */
 function extractClassroomReportContent() {
   const today = new Date();
@@ -194,38 +194,11 @@ function extractClassroomReportContent() {
     const expectedSubjectRegex = new RegExp(`^Classroom Report for [A-Z][a-z]{3} \\[${dateString}\\]$`);
     
     if (subject.match(expectedSubjectRegex)) {
-      // Use getPlainBody() for reliable text extraction, and getBody() for tables
+      // Use getPlainBody() for reliable text extraction
       const plainBody = message.getPlainBody();
-      const htmlBody = message.getBody();
-      
-      let tableData = null;
-      let textContent = plainBody;
-      
-      // Still try to extract the table from the HTML body if it exists
-      if (htmlBody) {
-        const tableRegex = /<table.*?>(.*?)<\/table>/s;
-        const tableMatch = htmlBody.match(tableRegex);
-
-        if (tableMatch) {
-          const tableHtml = tableMatch[0];
-          tableData = [];
-          const rowRegex = /<tr.*?>(.*?)<\/tr>/gs;
-          let rowMatch;
-          while ((rowMatch = rowRegex.exec(tableHtml)) !== null) {
-            const rowContent = [];
-            const cellRegex = /<td.*?>(.*?)<\/td>/gs;
-            let cellMatch;
-            while ((cellMatch = cellRegex.exec(rowMatch[1])) !== null) {
-              const cleanContent = cleanHtmlText(cellMatch[1].trim());
-              rowContent.push(cleanContent);
-            }
-            tableData.push(rowContent);
-          }
-        }
-      }
       
       Logger.log('Successfully extracted content from email.');
-      return { text: textContent, table: tableData };
+      return { text: plainBody };
     }
   }
 
@@ -237,9 +210,9 @@ function extractClassroomReportContent() {
  * Parses the raw text from the classroom report into a two-column table format.
  * This function uses a more robust approach to handle variable line breaks and concatenated data.
  * @param {string} reportText The plain text content of the report.
- * @return {Array<Array<string>>} A 2D array representing the table data.
+ * @return {Array<Array<string>>} A 2D array representing the table data with Time and Event columns.
  */
-function parseReportTextToTable(reportText) {
+function parseClassroomReportText(reportText) {
   const tableData = [['Time', 'Event']];
   // Regex to find all instances of a time string (e.g., "8:57 AM")
   const timeRegex = /(\d{1,2}:\d{2} (?:AM|PM))/gi;
