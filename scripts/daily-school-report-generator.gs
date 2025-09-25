@@ -98,7 +98,7 @@ function generateDailyReport() {
     
     sendNotificationEmail(
       `Daily School Report - ${today.toLocaleDateString()}`, 
-      `Your daily report has been updated.`,
+      `Here is your daily post-school report.`,
       docName,
       extractedElements,
       mealPlanImageBlob,
