@@ -319,7 +319,7 @@ function writeToGoogleDoc(elements, mealPlanImageBlob, mealPlanFileUrl) {
         if (element.highlightRow !== undefined && element.highlightRow !== -1) {
           const row = newTable.getRow(element.highlightRow);
           const attributes = {};
-          attributes[DocumentApp.Attribute.BACKGROUND_COLOR] = '#FFF2CC';
+          attributes[DocumentApp.Attribute.BACKGROUND_COLOR] = '#84c2efff';
           for (let c = 0; c < row.getNumCells(); c++) {
             row.getCell(c).setAttributes(attributes);
           }
