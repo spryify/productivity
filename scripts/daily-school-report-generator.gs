@@ -1,35 +1,102 @@
 /**
- * Generates a daily report by finding a specific lesson plan file,
- * and a weekly meal plan file, extracting relevant content from both,
- * and writing it to the current Google Docs file.
+ * A standalone Google Apps Script to generate a daily report from a new email.
+ *
+ * INSTRUCTIONS:
+ * 1. Create a new standalone Apps Script project (or use the one you have).
+ * 2. Copy and paste this code into the new project's main file.
+ * 3. Replace the placeholder values for LESSON_PLAN_FOLDER_ID, MEAL_PLAN_FOLDER_ID,
+ * and REPORT_DOC_ID with your actual Google Drive and Docs IDs.
+ * 4. In the Apps Script editor, click the clock icon to go to "Triggers".
+ * 5. Add a new trigger:
+ * - Choose which function to run: `checkNewEmailsAndGenerateReport`
+ * - Choose event source: "Time-driven"
+ * - Select a time interval (e.g., "Every 5 minutes").
+ * - Leave the failure notification settings as they are.
  */
-function generateDailyReport() {
-  // IMPORTANT: Replace this with the ID of your Google Drive folder.
-  // The folder ID is the long string in the URL after '/folders/'.
-  const LESSON_PLAN_FOLDER_ID = '0BxIRVU3Uu0TqYzBhM2VkNDQtNWQxZS00NDA2LWJkMjctNjQ3NDMxZTVjMGIx'; 
-  const MEAL_PLAN_FOLDER_ID = '0BxIRVU3Uu0TqYWQ1YTRjZjEtZDk4ZS00MjUxLTgyYmItMzBlNjZjNjc5YzMy';
+
+// IMPORTANT: Replace this with the ID of your Google Drive folder for lesson plans.
+const LESSON_PLAN_FOLDER_ID = '0BxIRVU3Uu0TqYzBhM2VkNDQtNWQxZS00NDA2LWJkMjctNjQ3NDMxZTVjMGIx'; 
+// IMPORTANT: Replace this with the ID of your Google Drive folder for meal plans.
+const MEAL_PLAN_FOLDER_ID = '0BxIRVU3Uu0TqYWQ1YTRjZjEtZDk4ZS00MjUxLTgyYmItMzBlNjZjNjc5YzMy';
+// IMPORTANT: Replace this with the ID of the Google Doc where you want the report to be written.
+const REPORT_DOC_ID = '1zrbvfaZT_ZVkuxuuvmYyCdPi52rdPjgHL2UIF9plBPE';
+
+/**
+ * The main entry point for the time-driven trigger.
+ * This function searches for new, unread emails with the correct subject
+ * and processes them to generate a report.
+ */
+function checkNewEmailsAndGenerateReport() {
+  const today = new Date();
+  const dateString = Utilities.formatDate(today, Session.getScriptTimeZone(), "dd MMM yyyy");
   
-  const doc = DocumentApp.getActiveDocument();
-  const docUrl = doc.getUrl();
+  // Create a regular expression to match the dynamic subject pattern
+  // Create a regular expression to match the dynamic subject pattern
+  const subjectPattern = new RegExp(`^Classroom Report for [A-Z][a-z]{3} \\[${dateString}\\]$`);
+    
+  // First, perform a broad search for any unread email with the common phrase
+  const subjectQuery = `is:unread subject:"Classroom Report for " newer_than:1d`;
+  Logger.log(`Searching for email with subject: "${subjectQuery}"`);
+  const threads = GmailApp.search(subjectQuery, 0, 1);
+
+  if (threads.length === 0) {
+    Logger.log('No unread emails found with the phrase "Classroom Report". Skipping.');
+    return;
+  }
+  
+  Logger.log(`Found ${threads.length} unread email thread(s) to check.`);
+  
+  threads.forEach(thread => {
+    const messages = thread.getMessages();
+    // Process the most recent message in the thread
+    const message = messages[messages.length - 1];
+    const subject = message.getSubject();
+    
+    // Use the regular expression to check if the subject matches the exact pattern
+    if (subjectPattern.test(subject)) {
+      Logger.log(`Processing email with subject: "${subject}"`);
+      try {
+        generateReport(message);
+        // Mark the message as read so it's not processed again on the next run
+        message.markRead();
+      } catch (e) {
+        Logger.log(`Error processing email "${subject}": ${e.message}`);
+        // Don't mark as read if there was an error, so it can be retried later
+      }
+    } else {
+      Logger.log(`Skipping email with subject: "${subject}" - does not match today's report pattern.`);
+    }
+  });
+}
+
+/**
+ * Generates a daily report by extracting content from a received email,
+ * and finding relevant files in Google Drive, then writes the report to a Google Doc.
+ * This function should be called by the `onNewReportEmail` trigger handler.
+ * @param {GoogleAppsScript.Gmail.GmailMessage} message The Gmail message object from the trigger.
+ */
+function generateReport(message) {
+  const doc = DocumentApp.openById(REPORT_DOC_ID);
   const docName = doc.getName();
+  const today = new Date();
   
   try {
-    const today = new Date();
     const extractedElements = [];
     let mealPlanImageBlob = null;
     let mealPlanFileUrl = null;
     
-    // --- Step 1: Extract the Daily Classroom Report from an email ---
-    const classroomReportContent = extractClassroomReportContent();
-    if (classroomReportContent) {
+    // --- Step 1: Extract the Daily Classroom Report from the received email ---
+    Logger.log(`Extracting content from the email: ${message.getSubject()}`);
+    // Get the plain body of the email to extract text content
+    const plainBody = message.getPlainBody();
+    
+    if (plainBody) {
       extractedElements.push({ type: 'HEADING', data: 'Daily Classroom Report' });
-      // The `classroomReportContent.text` is a single string.
-      // We will create a table from the text and add it to the elements.
-      if (classroomReportContent.text) {
-        const reportTableData = parseClassroomReportText(classroomReportContent.text);
-        if (reportTableData.length > 0) {
-          extractedElements.push({ type: 'TABLE', data: reportTableData, isClassroomReport: true });
-        }
+      // The `plainBody` is a single string.
+      // Parse the text into a table and add it to the extracted elements.
+      const reportTableData = parseClassroomReportText(plainBody);
+      if (reportTableData.length > 0) {
+        extractedElements.push({ type: 'TABLE', data: reportTableData, isClassroomReport: true });
       }
     }
     
@@ -93,9 +160,10 @@ function generateDailyReport() {
       extractedElements.push({ type: 'PARAGRAPH', data: `Error accessing meal plan file: ${e.message}` });
     }
   
-    // --- Step 4: Write the report content to the current document ---
-    writeToGoogleDoc(extractedElements, mealPlanImageBlob, mealPlanFileUrl);
+    // --- Step 4: Write the report content to the document ---
+    writeToGoogleDoc(doc, extractedElements, mealPlanImageBlob, mealPlanFileUrl);
     
+    // --- Step 5: Send the notification email, including the extracted report data ---
     sendNotificationEmail(
       `Daily School Report - ${today.toLocaleDateString()}`, 
       `Here is your daily post-school report.`,
@@ -174,39 +242,6 @@ function extractInformation(file) {
 }
 
 /**
- * Reads the latest email with a specific subject line, extracts the text
- * from its body, and returns the content.
- * @return {object | null} An object with 'text' property, or null if not found.
- */
-function extractClassroomReportContent() {
-  const today = new Date();
-  const dateString = Utilities.formatDate(today, Session.getScriptTimeZone(), "dd MMM yyyy");
-  
-  const subjectQuery = `subject:"Classroom Report for" newer_than:1d`;
-  Logger.log(`Searching for email with subject: "${subjectQuery}"`);
-
-  const threads = GmailApp.search(subjectQuery, 0, 10);
-  
-  for (const thread of threads) {
-    const message = thread.getMessages()[0];
-    const subject = message.getSubject();
-    
-    const expectedSubjectRegex = new RegExp(`^Classroom Report for [A-Z][a-z]{3} \\[${dateString}\\]$`);
-    
-    if (subject.match(expectedSubjectRegex)) {
-      // Use getPlainBody() for reliable text extraction
-      const plainBody = message.getPlainBody();
-      
-      Logger.log('Successfully extracted content from email.');
-      return { text: plainBody };
-    }
-  }
-
-  Logger.log('No matching email thread found.');
-  return null;
-}
-
-/**
  * Parses the raw text from the classroom report into a two-column table format.
  * This function uses a more robust approach to handle variable line breaks and concatenated data.
  * @param {string} reportText The plain text content of the report.
@@ -244,9 +279,16 @@ function parseClassroomReportText(reportText) {
 
     // Extract the event text and clean it up
     let eventText = reportText.substring(eventStartIndex, eventEndIndex).trim();
+       
+    // Remove email quote markers (> symbols) from the beginning of lines
+    eventText = eventText.replace(/^>\s*/gm, '');
+    
+    // Remove markdown-style asterisks used for emphasis/bold formatting
+    eventText = eventText.replace(/\*/g, '');
     
     // Remove the unwanted "Powered by NeatSchool" text from the last entry
     eventText = eventText.replace(neatSchoolRegex, '').trim();
+
 
     tableData.push([time, eventText]);
   }
@@ -254,42 +296,15 @@ function parseClassroomReportText(reportText) {
   return tableData;
 }
 
-
 /**
- * Cleans up HTML text by replacing tags with newlines and
- * removing redundant whitespace.
- * @param {string} html The HTML string to clean.
- * @return {string} The cleaned text.
- */
-function cleanHtmlText(html) {
-  // Replace block-level and break tags with a newline.
-  let cleanedText = html.replace(/<br\s*\/?>|<\/p>|<\/div>|<\/li>|<\/tr>|<\/td>/gi, '\n');
-  
-  // Remove all other remaining HTML tags.
-  cleanedText = cleanedText.replace(/<[^>]*>/g, '');
-  
-  // Decode HTML entities like &nbsp;.
-  cleanedText = cleanedText.replace(/&nbsp;|\u00a0/gi, ' ');
-  
-  // Clean up the text.
-  // First, replace multiple spaces and tabs with a single space.
-  cleanedText = cleanedText.replace(/[ \t]{2,}/g, ' ');
-  // Next, replace multiple newlines with a single newline.
-  cleanedText = cleanedText.replace(/\n{2,}/g, '\n');
-  
-  // Trim leading/trailing whitespace.
-  return cleanedText.trim();
-}
-
-/**
- * Writes the provided content to the current active Google Docs file,
+ * Writes the provided content to the specified Google Docs file,
  * clearing any existing content first and preserving element types.
+ * @param {GoogleAppsScript.Document.Document} doc The document object to write to.
  * @param {Array<Object>} elements The array of structured document elements.
  * @param {GoogleAppsScript.Base.Blob} mealPlanImageBlob The PDF image blob to insert.
  * @param {string} mealPlanFileUrl The URL of the meal plan PDF file (fallback).
  */
-function writeToGoogleDoc(elements, mealPlanImageBlob, mealPlanFileUrl) {
-  const doc = DocumentApp.getActiveDocument();
+function writeToGoogleDoc(doc, elements, mealPlanImageBlob, mealPlanFileUrl) {
   const body = doc.getBody();
   
   // Clear existing content
@@ -319,7 +334,7 @@ function writeToGoogleDoc(elements, mealPlanImageBlob, mealPlanFileUrl) {
         if (element.highlightRow !== undefined && element.highlightRow !== -1) {
           const row = newTable.getRow(element.highlightRow);
           const attributes = {};
-          attributes[DocumentApp.Attribute.BACKGROUND_COLOR] = '#84c2efff';
+          attributes[DocumentApp.Attribute.BACKGROUND_COLOR] = '#afd9f8ff';
           for (let c = 0; c < row.getNumCells(); c++) {
             row.getCell(c).setAttributes(attributes);
           }
@@ -398,12 +413,12 @@ function sendNotificationEmail(subject, body, docName, elements, mealPlanImageBl
             // Limit the number of rows to prevent large email bodies
             const tableData = element.data.slice(0, MAX_TABLE_ROWS);
             if (element.data.length > MAX_TABLE_ROWS) {
-              htmlBody += `<p><i>(Table truncated to ${MAX_TABLES_ROWS} rows)</i></p>`;
+              htmlBody += `<p><i>(Table truncated to ${MAX_TABLE_ROWS} rows)</i></p>`;
             }
             tableData.forEach((row, rowIndex) => {
               let rowStyle = '';
               if (element.highlightRow === rowIndex) {
-                rowStyle = 'background-color: #FFF2CC;';
+                rowStyle = 'background-color: #afd9f8ff;';
               }
               htmlBody += `<tr style="${rowStyle}">`;
               
@@ -468,4 +483,3 @@ function sendNotificationEmail(subject, body, docName, elements, mealPlanImageBl
   
   Logger.log(`Notification email sent to ${userEmail} with subject: ${subject}`);
 }
-
